@@ -2,7 +2,7 @@
 
 # freebsd wordpress setup script v1.0
 #
-# requirements: freebsd, apache 2.2, php 5.x, and mysql 5.x, root access
+# requirements: freebsd, apache 2.2, php 5.x, and mysql 5.x, bind, and root access
 #
 # you will need to add the following to your httpd.conf
 #
@@ -17,12 +17,24 @@
 # c. creates virtual host
 # d. creates proper folders and permissions for domain
 # e. reloads apache with your domain added
-# f. creates mysql database, if none specified takes domain minus extension, also checks if it exists already
-# g. downloads latest wordpress version or whatever version you select
-# h. creates proper secure salts for your wp-config
-# i. adds database info to your wp-config
+# f. adds dns zone file
+# g. adds dns zone file config to named.conf
+# h. reloads named server
+# i. creates mysql database, if none specified takes domain minus extension, also checks if it exists already
+# j. downloads latest wordpress version or whatever version you select
+# k. creates proper secure salts for your wp-config
+# l. adds database info to your wp-config
 
 #### edit the following to fit your freebsd server
+
+# dns server admin
+admin="admin@domain.com"
+
+# primary nameserver
+ns1="ns1.domain.com"
+
+# secondary nameserver
+ns2="ns2.domain.com"
 
 # user login
 username="username"
@@ -31,10 +43,10 @@ username="username"
 htdocs="domains"
 
 # mysql username
-db_user="mysqluser"
+db_user="mysql_username"
 
 # mysql password
-db_password="mysqlpassword"
+db_password="mysql_password"
 
 # directory to store the apache domain .conf files
 #
@@ -86,6 +98,40 @@ cat <<- _EOF_
 _EOF_
 }
 
+function create_dns_zone {
+cat <<- _EOF_
+serial=`date +%Y%m%d00`
+$ORIGIN .
+$TTL 3D     ; 3 days"
+$domain   IN     SOA    ns1.$domain. $admin. (
+               $serial    ; serial, todays date + todays serial
+               10800           ; refresh, seconds
+               3600            ; retry, seconds
+               1209600         ; expire, seconds
+               1D )            ; minimum, seconds
+                  IN       A    $host
+                  IN       NS    $ns1.
+                  IN       NS    $ns2.
+                  IN       MX    5 mail.$domain.
+$ORIGIN $domain.
+mail.$domain. IN     A     $host
+www           IN     CNAME $domain.
+ftp           IN     A     $host
+sql           IN     A     $host
+ns1           IN     A     $host
+ns2           IN     A     $host
+_EOF_
+}
+
+function update_dns_config {
+cat <<- _EOF_
+zone $domain IN {
+     type master;
+     file /etc/namedb/master/$domain.db;
+};
+_EOF_
+}
+
 if [[ $EUID -ne 0 ]]; then
    echo "You must be root to do this." 1>&2
    exit 0
@@ -102,6 +148,7 @@ else if [ $# -ne 2 ]; then
       then
          reloadscript="/usr/local/etc/rc.d/apache22 reload"
          configdir="/usr/local/etc/apache22/$configsubdir"
+	 named="/etc/rc.d/named"
          domain=$1
          host=$2
 	 homedir="/usr/home/$username"
@@ -119,7 +166,7 @@ else if [ $# -ne 2 ]; then
             echo "ip matches, but non on this system"
             exit
          else
-	    auto_db_name="${host%%.*}"
+	    auto_db_name="${domain%%.*}"
             db_name=${3-$auto_db_name}
             #wp_current_version=`curl -s http://api.wordpress.org/core/version-check/1.6/ | awk -F\" '{print $34}'`
             wp_current_version=`curl -s http://api.wordpress.org/core/version-check/1.6/ | sed -e 's/.*s:7:"current";s:5:"//;s/".*//'`
@@ -147,6 +194,11 @@ else if [ $# -ne 2 ]; then
                   create_vhost > $configdir/$domain.conf
                   echo "reloading apache..."
                   $reloadscript > /dev/null 2>&1
+		  echo "The zone file for the domain $domain will be created using $host."
+                  create_dns_zone > /etc/namedb/master/$domain.db
+                  update_dns_config >> /etc/namedb/named.conf
+		  echo "Zone added to named.conf. Reloading named"
+		  $named reload > /dev/null 2>&1
                   echo "downloading wordpress..."
                   svn co http://core.svn.wordpress.org/tags/$wpversion $webdir/$domain/ -q
                   echo "configuring Salts..."
@@ -170,5 +222,4 @@ else if [ $# -ne 2 ]; then
          exit
       fi
    fi
-  fi
 fi
