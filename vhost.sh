@@ -212,6 +212,7 @@ else if [ $# -ne 2 ]; then
                   sed "s/database_name_here/$db_name/g" "$wpconfig" > "$wpconfig.new" && mv "$wpconfig.new" "$wpconfig"
                   sed "s/username_here/$db_user/g" "$wpconfig" > "$wpconfig.new" && mv "$wpconfig.new" "$wpconfig"
                   sed "s/password_here/$db_password/g" "$wpconfig" > "$wpconfig.new" && mv "$wpconfig.new" "$wpconfig"
+                  chown -R $username:$username $webdir/$domain
                   echo "Done..."
                   echo "visit http://www.$domain to complete the installation"
                fi
